@@ -1,0 +1,23 @@
+# Build output
+/build/
+/build-*/
+/out/
+/install/
+/prefix/
+CMakeUserPresets.json
+*.user
+
+# Editors
+.vs/
+.vscode/
+.idea/
+*.swp
+
+# Test / run debris
+*.log
+*.tmp
+*.dmp
+*.pdb
+fcr-data/
+/tmp/
+/tests/_scratch/
