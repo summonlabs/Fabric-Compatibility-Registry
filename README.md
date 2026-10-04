@@ -1,7 +1,7 @@
 # Fabric Compatibility Registry
 
 A standalone, vendor-neutral compatibility authority for
-**Summon Software Labs Fabric OS**.
+**network fabric components**.
 
 The registry owns *compatibility knowledge* and *compatibility decisions*. It answers one
 question, and answers it the same way every time:
