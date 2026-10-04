@@ -458,7 +458,7 @@ which decisions changed — completed work, not a prediction.
     auto decision = authority.value()->QueryPair(left, right);
     std::cout << decision.value().narrative;
 
-`RegistryAuthority` is the whole surface Fabric Upgrade Manager needs: open, query pair,
+`RegistryAuthority` is the whole surface [Fabric Upgrade Manager](https://github.com/summonlabs/Fabric-Upgrade-Manager) needs: open, query pair,
 query set, snapshot a generation, validate, simulate, publish, diff, replay, provenance,
 status, stamp checking and prune. `OpenInMemory` provides the same behaviour without
 persistence, for embedding and tests.
