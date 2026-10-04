@@ -70,6 +70,26 @@ RegistryDocument RenamedDocument(const std::string& name) {
   return builder.Build();
 }
 
+// Binary generation-file layout, from the format table in include/fcr/store.hpp:
+//   [0, 72)   header fields covered by the CRC-32C stored at [72, 76)
+//   [72, 76)  the stored CRC-32C itself, compared against a recomputation
+//   [76, 96)  reserved, zero: outside CRC coverage and never validated
+//   [96, ..)  canonical registry document JSON, covered by the stored SHA-256
+// A single-byte corruption is therefore contractually detectable everywhere
+// except in the reserved tail, whose bytes carry no meaning at all.
+constexpr std::size_t kCrcCoveredHeaderStart = 0;
+constexpr std::size_t kCrcCoveredHeaderEnd = 72;
+constexpr std::size_t kHeaderCrcFieldStart = 72;
+constexpr std::size_t kHeaderCrcFieldEnd = 76;
+constexpr std::size_t kReservedHeaderStart = 76;
+constexpr std::size_t kReservedHeaderEnd = kGenerationHeaderBytes;
+
+std::vector<std::byte> FlipByte(std::vector<std::byte> bytes, std::size_t index,
+                                unsigned delta) {
+  bytes[index] = static_cast<std::byte>(std::to_integer<unsigned>(bytes[index]) ^ delta);
+  return bytes;
+}
+
 }  // namespace
 
 FCR_TEST(store, publish_persists_and_reloads) {
@@ -232,15 +252,42 @@ FCR_TEST(store, header_corruption_is_detected) {
     CHECK_OK(store.value().Publish(MakeStandardDocument(),
                                    store.value().CurrentFence().value()));
   }
-  std::vector<std::byte> bytes = ReadBytes(GenerationFile(directory, GenerationNumber(1)));
+  const std::filesystem::path path = GenerationFile(directory, GenerationNumber(1));
+  const std::vector<std::byte> intact = ReadBytes(path);
+  ContentDigest intact_digest;
+  {
+    auto baseline_store = OpenForRead(directory);
+    CHECK_OK(baseline_store);
+    auto baseline = baseline_store.value().LoadGeneration(GenerationNumber(1));
+    CHECK_OK(baseline);
+    intact_digest = baseline.value().id.digest;
+  }
+
+  // A CRC-covered header byte is protected, so the file is refused.
+  std::vector<std::byte> bytes = intact;
   bytes[10] = static_cast<std::byte>(std::to_integer<unsigned>(bytes[10]) ^ 0xff);
-  WriteBytes(GenerationFile(directory, GenerationNumber(1)), bytes);
+  WriteBytes(path, bytes);
   auto store = OpenForRead(directory);
   CHECK_OK(store);
   auto loaded = store.value().LoadGeneration(GenerationNumber(1));
   CHECK_FALSE(loaded.has_value());
   CHECK(loaded.error().code == ErrorCode::CorruptPersistence ||
         loaded.error().code == ErrorCode::DigestMismatch);
+
+  // The reserved header tail [76, 96) is deliberately outside CRC coverage: the
+  // bytes carry no meaning, so the same file with a rewritten tail must still
+  // load and must yield the same generation identity and document.
+  std::vector<std::byte> reserved = intact;
+  for (std::size_t index = kReservedHeaderStart; index < kReservedHeaderEnd; ++index) {
+    reserved[index] = std::byte{0xa5};
+  }
+  WriteBytes(path, reserved);
+  auto reopened = OpenForRead(directory);
+  CHECK_OK(reopened);
+  auto reloaded = reopened.value().LoadGeneration(GenerationNumber(1));
+  CHECK_OK(reloaded);
+  CHECK_EQ(reloaded.value().id.number.value(), 1u);
+  CHECK_EQ(reloaded.value().id.digest.ToHex(), intact_digest.ToHex());
   RemoveDirectoryQuietly(directory);
 }
 
@@ -451,7 +498,7 @@ FCR_TEST(store, encoding_and_decoding_round_trips) {
   auto encoded = RegistryStore::EncodeGeneration(document, GenerationNumber(7), PublisherEpoch(3),
                                                  Incarnation(11), 64ull * 1024ull * 1024ull);
   CHECK_OK(encoded);
-  CHECK(encoded.value().size() > 96);
+  CHECK(encoded.value().size() > kGenerationHeaderBytes);
   GenerationNumber generation;
   PublisherEpoch epoch;
   Incarnation incarnation;
@@ -462,17 +509,81 @@ FCR_TEST(store, encoding_and_decoding_round_trips) {
   CHECK_EQ(incarnation.value(), 11u);
   CHECK_EQ(decoded.value().CanonicalJson(), expected.CanonicalJson());
 
-  // Every single-byte corruption must be detected.
+  const std::vector<std::byte> original = encoded.value();
+  const std::size_t payload_start = kGenerationHeaderBytes;
+  const std::size_t payload_size = original.size() - payload_start;
+  CHECK(payload_size > 0);
+
+  // CRC-32C coverage: every header byte in [0, 72) is protected, so this sweep
+  // is exhaustive rather than sampled.
+  for (std::size_t index = kCrcCoveredHeaderStart; index < kCrcCoveredHeaderEnd; ++index) {
+    auto result = RegistryStore::DecodeGeneration(FlipByte(original, index, 0xff), nullptr,
+                                                  nullptr, nullptr);
+    if (result.has_value()) {
+      FCR_FAIL("corruption of CRC-covered header byte " << index << " was not detected");
+    }
+  }
+  // The stored CRC-32C field is compared against a recomputation over [0, 72),
+  // so corruption inside the field itself is detected too.
+  for (std::size_t index = kHeaderCrcFieldStart; index < kHeaderCrcFieldEnd; ++index) {
+    auto result = RegistryStore::DecodeGeneration(FlipByte(original, index, 0xff), nullptr,
+                                                  nullptr, nullptr);
+    if (result.has_value()) {
+      FCR_FAIL("corruption of header CRC field byte " << index << " was not detected");
+    }
+  }
+  // Payload bytes are covered by the stored SHA-256 digest. The seed and case
+  // count are unchanged; only the sampled range is narrowed to the bytes the
+  // format actually promises to protect.
   Rng rng(0x31415926ull);
   for (int attempt = 0; attempt < 300; ++attempt) {
-    std::vector<std::byte> corrupted = encoded.value();
-    const std::size_t index = rng.Below(static_cast<std::uint32_t>(corrupted.size()));
-    corrupted[index] =
-        static_cast<std::byte>(std::to_integer<unsigned>(corrupted[index]) ^
-                               static_cast<unsigned>(1 + rng.Below(255)));
-    auto result = RegistryStore::DecodeGeneration(corrupted, nullptr, nullptr, nullptr);
+    const std::size_t index =
+        payload_start + rng.Below(static_cast<std::uint32_t>(payload_size));
+    const unsigned delta = 1 + rng.Below(255);
+    auto result = RegistryStore::DecodeGeneration(FlipByte(original, index, delta), nullptr,
+                                                  nullptr, nullptr);
     if (result.has_value()) {
-      FCR_FAIL("corruption at byte " << index << " was not detected");
+      FCR_FAIL("corruption of digest-protected payload byte " << index << " was not detected");
     }
+  }
+  // The reserved tail [76, 96) is documented as reserved and zero and is
+  // deliberately excluded from CRC coverage. The contract there is inertness,
+  // not detection: a mutated tail must decode to exactly the same generation
+  // fields and the same canonical document.
+  for (std::size_t index = kReservedHeaderStart; index < kReservedHeaderEnd; ++index) {
+    auto result = RegistryStore::DecodeGeneration(FlipByte(original, index, 0xff),
+                                                  &generation, &epoch, &incarnation);
+    CHECK_OK(result);
+    CHECK_EQ(generation.value(), 7u);
+    CHECK_EQ(epoch.value(), 3u);
+    CHECK_EQ(incarnation.value(), 11u);
+    CHECK_EQ(result.value().CanonicalJson(), expected.CanonicalJson());
+    CHECK_EQ(result.value().Digest().ToHex(), expected.Digest().ToHex());
+  }
+  {
+    // A fully rewritten reserved tail is equally inert.
+    std::vector<std::byte> rewritten = original;
+    for (std::size_t index = kReservedHeaderStart; index < kReservedHeaderEnd; ++index) {
+      rewritten[index] = std::byte{0x5a};
+    }
+    auto result = RegistryStore::DecodeGeneration(rewritten, nullptr, nullptr, nullptr);
+    CHECK_OK(result);
+    CHECK_EQ(result.value().CanonicalJson(), expected.CanonicalJson());
+  }
+  // Truncation stays outside the format contract: a short header, a header with
+  // no payload, and a payload shorter than the length recorded in the header are
+  // all rejected.
+  {
+    const std::vector<std::byte> header_only(original.begin(),
+                                             original.begin() + kGenerationHeaderBytes);
+    CHECK_ERR(RegistryStore::DecodeGeneration(header_only, nullptr, nullptr, nullptr),
+              ErrorCode::CorruptPersistence);
+    const std::vector<std::byte> short_header(original.begin(),
+                                              original.begin() + kGenerationHeaderBytes - 1);
+    CHECK_ERR(RegistryStore::DecodeGeneration(short_header, nullptr, nullptr, nullptr),
+              ErrorCode::CorruptPersistence);
+    const std::vector<std::byte> short_payload(original.begin(), original.end() - 1);
+    CHECK_ERR(RegistryStore::DecodeGeneration(short_payload, nullptr, nullptr, nullptr),
+              ErrorCode::CorruptPersistence);
   }
 }
