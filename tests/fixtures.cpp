@@ -168,7 +168,7 @@ Rule MakeRule(const std::string& id, RuleOutcome outcome) {
 }
 
 RegistryDocumentBuilder MakeStandardBuilder() {
-  RegistryDocumentBuilder builder("fabric-os-standard", TestPublisher());
+  RegistryDocumentBuilder builder("fabric-standard", TestPublisher());
   builder.SetGeneration(GenerationNumber(1));
   builder.SetEpoch(PublisherEpoch(1));
   builder.SetCreatedAt(FixedTimestamp());

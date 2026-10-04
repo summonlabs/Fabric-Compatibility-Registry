@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(FabricCompatibilityRegistry
         VERSION 1.0.0
-        DESCRIPTION "Vendor-neutral compatibility registry runtime for Summon Software Labs Fabric OS"
+        DESCRIPTION "Vendor-neutral compatibility registry runtime for data-center fabric infrastructure"
         LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)

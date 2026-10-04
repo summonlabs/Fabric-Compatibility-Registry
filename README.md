@@ -235,10 +235,10 @@ Three outcomes, never two:
 
 A query returns an inspectable explanation, not just a verdict:
 
-    decision 4f63d437c20e1ca2b098f271b14ec7b7d4a4498e96decaa10c4f93f07df0994f
+    decision 880a5e0f8165da9cb15fc3d011e51f67f3785e4dff2a0d3e7f5a86f4b63d4a42
       outcome: compatible
       reason: decided_by_rule
-      generation: gen-1:6cf5f6414d4ea1a8985a1f0ac74be385f7097c755f92261301a8336ff1294b9e
+      generation: gen-1:4934ff36efbee97134aa281798346b3c5756299ef7e62f267caec9c800ba7263
       arity: pair
       subject[0]: rdma.nic 2.4.1 (family=fabric.transport, instance=node-a-nic0)
       subject[1]: rdma.nic 2.3.0 (family=fabric.transport, instance=node-b-nic0)

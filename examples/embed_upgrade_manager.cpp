@@ -46,7 +46,7 @@ fcr::Result<fcr::ComponentSpec> MakeNic(const std::string& instance, const std::
 fcr::Result<fcr::RegistryDocument> BuildRegistry() {
   auto publisher = fcr::PublisherId::Parse("platform-engineering");
   if (!publisher.has_value()) return publisher.error();
-  fcr::RegistryDocumentBuilder builder("fabric-os-standard", publisher.value());
+  fcr::RegistryDocumentBuilder builder("fabric-standard", publisher.value());
   builder.SetGeneration(fcr::GenerationNumber(1));
   builder.SetEpoch(fcr::PublisherEpoch(1));
   builder.SetCreatedAt(fcr::Timestamp::FromIso8601("2026-03-01T00:00:00Z").value());
@@ -170,7 +170,7 @@ int main() {
   std::cout << "full explanation of the first decision:\n\n" << first.value().narrative << "\n";
 
   // Publication is fenced against the generation the caller read.
-  fcr::RegistryDocumentBuilder builder("fabric-os-standard",
+  fcr::RegistryDocumentBuilder builder("fabric-standard",
                                        fcr::PublisherId::Parse("platform-engineering").value());
   builder.SetCreatedAt(fcr::Timestamp::FromIso8601("2026-03-02T00:00:00Z").value());
   fcr::PublishRequest request;

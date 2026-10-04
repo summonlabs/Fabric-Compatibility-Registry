@@ -42,7 +42,7 @@ void Report(const Summary& summary) {
 fcr::Result<fcr::RegistryDocument> BuildDocument(std::size_t rule_count, std::size_t generation) {
   auto publisher = fcr::PublisherId::Parse("benchmark");
   if (!publisher.has_value()) return publisher.error();
-  fcr::RegistryDocumentBuilder builder("fabric-os-benchmark", publisher.value());
+  fcr::RegistryDocumentBuilder builder("fabric-benchmark", publisher.value());
   builder.SetGeneration(fcr::GenerationNumber(generation));
   builder.SetEpoch(fcr::PublisherEpoch(1));
   builder.SetCreatedAt(fcr::Timestamp::FromNanos(1767225600000000000LL));
