@@ -1,6 +1,7 @@
 // Fabric Compatibility Registry - Summon Software Labs
 // Second hardening pass: adversarial cases that go beyond the primary suites.
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -346,5 +347,35 @@ FCR_TEST(hardening, repeated_publish_and_query_over_one_connection) {
   CHECK_EQ(stats.completed_requests, std::uint64_t{25});
   CHECK_EQ(stats.failed_requests, std::uint64_t{1});
   CHECK_EQ(stats.active_connections, std::size_t{0});
+  RemoveDirectoryQuietly(directory);
+}
+
+FCR_TEST(hardening, a_publication_waits_for_a_reader_of_the_head_metadata) {
+  const std::string directory = UniqueTempDirectory("meta-reader");
+  StoreOptions options;
+  options.directory = directory;
+  options.mode = OpenMode::ReadWrite;
+  auto store = RegistryStore::Open(options);
+  CHECK_OK(store);
+  CHECK_OK(store.value().Publish(MakeStandardDocument(), store.value().CurrentFence().value()));
+  bool reader_opened = false;
+  bool published = false;
+  {
+    // Another tool reading the store (an inspection, a scan) holds the head
+    // metadata open while the next publication replaces it, and closes it
+    // shortly after.
+    std::ifstream reader(std::filesystem::path(directory) / "registry.meta", std::ios::binary);
+    reader_opened = reader.is_open();
+    RegistryStore& live = store.value();
+    std::thread publisher([&live, &published] {
+      published = live.Publish(MakeStandardDocument(), live.CurrentFence().value()).has_value();
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    reader.close();
+    publisher.join();
+  }
+  CHECK(reader_opened);
+  // The head switch waits for the reader instead of failing the publication.
+  CHECK(published);
   RemoveDirectoryQuietly(directory);
 }
