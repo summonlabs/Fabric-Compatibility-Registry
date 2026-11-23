@@ -114,6 +114,11 @@ void RegistryServer::BeginShutdown() {
     if (!pair.write_end.valid()) continue;
     (void)pair.write_end.SendAll(std::span<const std::byte>(&token, 1));
   }
+  // A worker tests the stop flag under queue_mutex_ before it waits. Passing
+  // through that mutex after the flag is set keeps the notification from
+  // falling between a worker's test and its wait, where it was lost and the
+  // worker was joined forever.
+  { std::lock_guard<std::mutex> lock(queue_mutex_); }
   queue_cv_.notify_all();
   if (options_.on_shutdown_request) options_.on_shutdown_request();
 }
